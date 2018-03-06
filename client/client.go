@@ -1,71 +1,132 @@
 package client
 
 import (
-    "github.com/omgitsotis/backend-challenge/dao"
-    "github.com/gorilla/mux"
-    "net/http"
-    "fmt"
-    "math"
-    "strconv"
+	"encoding/json"
+	"log"
+	"math"
+	"net/http"
+	"sort"
+	"strconv"
+
+	"github.com/gorilla/mux"
+	"github.com/omgitsotis/backend-challenge/dao"
 )
 
 type Client struct {
-    dao dao.DAO
+	dao dao.DAO
+}
+
+type ErrorResponse struct {
+	Message string `msg`
 }
 
 func NewClient(dao dao.DAO) *Client {
-    return &Client{dao}
+	return &Client{dao}
 }
 
 func ServeAPI(dao dao.DAO) error {
-    client := NewClient(dao)
-    r := mux.NewRouter()
-    r.Methods("GET").
-        Path("/search").
-        Queries("searchTerm", "{searchTerm}", "lat", "{lat}", "lng", "{lng}").
-        HandlerFunc(client.search)
+	client := NewClient(dao)
+	r := mux.NewRouter()
+	r.Methods("GET").
+		Path("/search").
+		Queries("searchTerm", "{searchTerm}", "lat", "{lat}", "lng", "{lng}").
+		HandlerFunc(client.search)
 
 	return http.ListenAndServe(":4000", r)
 }
 
 func (c *Client) search(w http.ResponseWriter, r *http.Request) {
-    vars := mux.Vars(r)
+	vars := mux.Vars(r)
 
-    searchTerm := vars["searchTerm"]
-    lng := vars["lng"]
-    lat := vars["lat"]
+	searchTerm, ok := vars["searchTerm"]
+	if !ok {
+		log.Println("no search term provided")
+		c.writeErrorResponse(w, http.StatusBadRequest, "no search term provided")
+		return
+	}
 
-    fmt.Printf("%s | %s | %s\n", searchTerm, lng, lat)
+	lat, ok := vars["lat"]
+	if !ok {
+		log.Println("no latitude provided")
+		c.writeErrorResponse(w, http.StatusBadRequest, "no latitude provided")
+		return
+	}
 
-    longitude, err := strconv.ParseFloat(lng, 64)
-    if err != nil {
-        w.WriteHeader(http.StatusBadRequest)
-        return
-    }
+	lng, ok := vars["lng"]
+	if !ok {
+		log.Println("no longitude provided")
+		c.writeErrorResponse(w, http.StatusBadRequest, "no longitude provided")
+		return
+	}
 
-    latitude, err := strconv.ParseFloat(lat, 64)
-    if err != nil {
-        w.WriteHeader(http.StatusBadRequest)
-        return
-    }
+	log.Printf("%s | %s | %s", searchTerm, lng, lat)
 
-    for i:= 1; i < 10; i++{
-        minLat := latitude - (0.01 * math.Pow(2.0, float64(i)))
-        maxLat := latitude + (0.01 * math.Pow(2.0, float64(i)))
+	longitude, err := strconv.ParseFloat(lng, 64)
+	if err != nil {
+		c.writeErrorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
-        minLong := longitude - (0.01 * math.Pow(2.0, float64(i)))
-        maxLong := longitude + (0.01 * math.Pow(2.0, float64(i)))
+	latitude, err := strconv.ParseFloat(lat, 64)
+	if err != nil {
+		c.writeErrorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
-        r := dao.Radius{minLat, maxLat, minLong, maxLong}
+	var rad dao.Radius
 
-        count, err := c.dao.GetItemCount(searchTerm, r)
-        if err != nil {
-            w.WriteHeader(http.StatusBadRequest)
-            return
-        }
+	for i := 1; i < 10; i++ {
+		minLat := latitude - (0.01 * math.Pow(2.0, float64(i)))
+		maxLat := latitude + (0.01 * math.Pow(2.0, float64(i)))
 
-        fmt.Println(count)
-    }
+		minLong := longitude - (0.01 * math.Pow(2.0, float64(i)))
+		maxLong := longitude + (0.01 * math.Pow(2.0, float64(i)))
 
-    fmt.Fprintln(w, "done")
+		rad = dao.Radius{
+			minLat, maxLat,
+			minLong, maxLong,
+			latitude, longitude,
+		}
+
+		count, err := c.dao.CountItems(searchTerm, rad)
+		if err != nil {
+			c.writeErrorResponse(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		log.Printf("Found %d item(s)", count)
+		if count >= 20 {
+			break
+		}
+	}
+
+	results, err := c.dao.GetItems(searchTerm, rad)
+	if err != nil {
+		c.writeErrorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	sort.Sort(dao.Rows(results))
+
+	b, err := json.Marshal(results)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	w.Write(b)
+}
+
+func (c *Client) writeErrorResponse(w http.ResponseWriter, code int, msg string) {
+	errorMsg := ErrorResponse{msg}
+	b, err := json.Marshal(errorMsg)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	w.WriteHeader(code)
+	w.Write(b)
 }
