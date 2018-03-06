@@ -1,7 +1,7 @@
 package dao
 
 type Row struct {
-	Item     string   `json:"item_id"`
+	ItemID   string   `json:"item_id"`
 	Lat      float64  `json:"latitude"`
 	Long     float64  `json:"longitude"`
 	URL      string   `json:"item_url"`

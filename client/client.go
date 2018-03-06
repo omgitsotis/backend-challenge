@@ -24,15 +24,19 @@ func NewClient(dao dao.DAO) *Client {
 	return &Client{dao}
 }
 
-func ServeAPI(dao dao.DAO) error {
-	client := NewClient(dao)
+func NewRouter(c *Client) *mux.Router {
 	r := mux.NewRouter()
 	r.Methods("GET").
 		Path("/search").
 		Queries("searchTerm", "{searchTerm}", "lat", "{lat}", "lng", "{lng}").
-		HandlerFunc(client.search)
+		HandlerFunc(c.search)
 
-	return http.ListenAndServe(":4000", r)
+	return r
+}
+
+func ServeAPI(dao dao.DAO) error {
+	client := NewClient(dao)
+	return http.ListenAndServe(":4000", NewRouter(client))
 }
 
 func (c *Client) search(w http.ResponseWriter, r *http.Request) {
@@ -82,6 +86,11 @@ func (c *Client) search(w http.ResponseWriter, r *http.Request) {
 		minLong := longitude - (0.01 * math.Pow(2.0, float64(i)))
 		maxLong := longitude + (0.01 * math.Pow(2.0, float64(i)))
 
+		log.Printf(
+			"Range: (%f, %f) - (%f, %f)",
+			minLat, minLong, maxLat, maxLong,
+		)
+
 		rad = dao.Radius{
 			minLat, maxLat,
 			minLong, maxLong,
@@ -107,6 +116,10 @@ func (c *Client) search(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sort.Sort(dao.Rows(results))
+
+	if len(results) > 20 {
+		results = results[:20]
+	}
 
 	b, err := json.Marshal(results)
 	if err != nil {
